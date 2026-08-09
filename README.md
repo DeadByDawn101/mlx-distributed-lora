@@ -393,3 +393,57 @@ Apache 2.0
 *August 9, 2026.*
 
 </div>
+
+---
+
+## Production Learnings (from extended testing)
+
+### Path Rules for Distributed Training
+
+| Do | Don't | Why |
+|----|-------|-----|
+| `/opt/training` | `~/training` | `~` expands to different home dirs per node |
+| `/var/tmp/adapters` | `/tmp/adapters` | `/tmp` is cleared on reboot |
+| Absolute paths only | Relative paths | mlx.launch SSHs to remote — relative paths resolve differently |
+
+### Validation Settings
+
+Long validation causes TCP timeouts. The ring backend's TCP connection drops if nodes are silent for too long during a synchronization pause.
+
+```bash
+# SAFE: fast validation, infrequent evaluation
+--val-batches 5 --steps-per-eval 500
+
+# DANGEROUS: slow validation, frequent evaluation  
+--val-batches 25 --steps-per-eval 200  # 52 seconds of silence = TCP death
+```
+
+### SSH Persistence
+
+Add to `~/.ssh/config` on the primary node:
+
+```
+Host *
+    ControlMaster auto
+    ControlPath /tmp/ssh-%r@%h:%p
+    ControlPersist 600
+    ServerAliveInterval 30
+    ServerAliveCountMax 10
+    TCPKeepAlive yes
+```
+
+### Use `networksetup` Not `ifconfig`
+
+Raw `ifconfig` sets IPs at the kernel level. macOS configd doesn't know about them and will fight you with DHCP. Use `networksetup -setmanual` instead — this creates a macOS-managed network service that survives sleep/wake and integrates with the system.
+
+```bash
+# WRONG (configd will fight it):
+sudo ifconfig en3 192.168.0.1 netmask 255.255.255.252
+
+# RIGHT (macOS manages it):
+sudo networksetup -setmanual "JACCL" 192.168.0.1 255.255.255.252
+```
+
+### Do NOT use WatchPaths LaunchDaemon with `ifconfig`
+
+A LaunchDaemon watching `/Library/Preferences/SystemConfiguration` that calls `ifconfig` creates an infinite loop: ifconfig triggers configd → writes to SystemConfiguration → fires WatchPaths → runs script → calls ifconfig → loop. This will destabilize training.
