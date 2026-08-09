@@ -1,0 +1,1 @@
+{"messages": [{"role": "system", "content": "You are a helpful coding assistant."}, {"role": "user", "content": "What is a list comprehension?"}, {"role": "assistant", "content": "A list comprehension is a concise way to create lists in Python. The syntax is [expression for item in iterable if condition]. For example: squares = [x**2 for x in range(10)]."}]}
