@@ -447,3 +447,41 @@ sudo networksetup -setmanual "JACCL" 192.168.0.1 255.255.255.252
 ### Do NOT use WatchPaths LaunchDaemon with `ifconfig`
 
 A LaunchDaemon watching `/Library/Preferences/SystemConfiguration` that calls `ifconfig` creates an infinite loop: ifconfig triggers configd → writes to SystemConfiguration → fires WatchPaths → runs script → calls ifconfig → loop. This will destabilize training.
+
+---
+
+## Thunderbolt Kernel Panic Fix (macOS 26.6.1)
+
+If plugging in a TB5 cable causes kernel panics (`far: 0x0`, pid `route` or `configd`), run this on **both** nodes:
+
+```bash
+sudo defaults write /Library/Preferences/SystemConfiguration/com.apple.autonetworkservices AutomaticServiceCreation -bool false
+```
+
+This stops macOS from auto-creating network services on Thunderbolt interfaces. The race condition between `configd/route` and PCIe driver initialization causes a NULL pointer dereference. See [our detailed write-up](https://github.com/DeadByDawn101/RavenX-JACCL-MLX/blob/main/docs/KERNEL-PANIC-FIX.md) for the full analysis (7 kernel panics, root-caused and fixed).
+
+### Additional Critical Rules
+
+- **No Thunderbolt Ethernet adapters** on either Mac (NCM/ECM driver bleeds across TB5 peer bus)
+- **SSH over WiFi, data over TB5** — two separate network planes
+- **TCP keepalive=1** on both nodes (`sysctl -w net.inet.tcp.always_keepalive=1`)
+- **Free en3 from bridge0** after every boot on macOS 26.6.1 (`sudo ifconfig bridge0 deletem en3`)
+
+### Dual-Plane Architecture
+
+```
+Management: WiFi (192.168.1.x) — SSH, coordination
+Data:       TB5  (192.168.0.x) — gradient sync
+```
+
+Hostfile uses WiFi IPs for SSH, TB5 IPs for data:
+```json
+{
+    "backend": "ring",
+    "envs": ["MLX_METAL_FAST_SYNCH=1"],
+    "hosts": [
+        {"ssh": "user0@192.168.1.155", "ips": ["192.168.0.1"], "rdma": []},
+        {"ssh": "user1@192.168.1.165", "ips": ["192.168.0.2"], "rdma": []}
+    ]
+}
+```
